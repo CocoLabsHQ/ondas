@@ -56,8 +56,11 @@ fun contrastRatio(a: Color, b: Color): Float {
 }
 
 /** Elige texto claro u oscuro, el que mejor contraste tenga con TODOS los fondos dados. */
-fun readableOn(vararg backgrounds: Color): Color =
+fun readableOn(backgrounds: List<Color>): Color =
     listOf(LightText, DarkText).maxBy { t -> backgrounds.minOf { contrastRatio(t, it) } }
+
+/** Atajo para uno o dos fondos (Color es una value class y Kotlin no permite vararg de Color). */
+fun readableOn(first: Color, second: Color? = null): Color = readableOn(listOfNotNull(first, second))
 
 object Themes {
     val all = listOf(
