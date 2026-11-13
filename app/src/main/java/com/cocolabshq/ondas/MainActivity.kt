@@ -44,7 +44,7 @@ private fun OndasRoot(vm: MainViewModel = viewModel()) {
         if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    OndasTheme(settings.themeId) {
+    OndasTheme(settings.themeId, settings.custom) {
         AppBackground(settings.wallpaperPath, settings.wallpaperVeil) {
             MainScaffold(vm, settings)
         }

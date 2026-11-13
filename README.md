@@ -8,6 +8,7 @@ App Android de radios online de todo el mundo. Kotlin + Jetpack Compose + Media3
 - Descubrir por país, género, idioma, calidad · Favoritas · Recientes
 - Temas estéticos y fondo propio desde la galería
 - Reproducción en segundo plano con notificación
+- Aviso de nuevas versiones (desde GitHub Releases) con "Actualizar" / "Más tarde"
 
 ## Compilar
 1. Abrir la carpeta en Android Studio (Ladybug o superior) y esperar la sincronización de Gradle.

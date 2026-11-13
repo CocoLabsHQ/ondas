@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.cocolabshq.ondas.data.AppSettings
+import com.cocolabshq.ondas.data.ColorSlot
 import com.cocolabshq.ondas.data.FilterOption
 import com.cocolabshq.ondas.data.Station
 import com.cocolabshq.ondas.data.StationQuery
@@ -19,6 +20,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.cocolabshq.ondas.update.UpdateChecker
+import com.cocolabshq.ondas.update.UpdateState
+import java.io.File
 
 data class DiscoverState(
     val query: StationQuery = StationQuery(),
@@ -125,12 +129,80 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(id: String) = viewModelScope.launch { settingsRepo.setTheme(id) }
     fun setVeil(v: Float) = viewModelScope.launch { settingsRepo.setVeil(v) }
     fun setHomeCountry(code: String) = viewModelScope.launch { settingsRepo.setHomeCountry(code) }
+    fun setCustomColor(slot: ColorSlot, argb: Int) = viewModelScope.launch { settingsRepo.setCustomColor(slot, argb) }
+    fun setTextMode(mode: String) = viewModelScope.launch { settingsRepo.setTextMode(mode) }
     fun clearWallpaper() = viewModelScope.launch { settingsRepo.setWallpaper(null) }
     fun setWallpaper(uri: Uri) = viewModelScope.launch {
         settingsRepo.importWallpaper(uri)?.let { settingsRepo.setWallpaper(it) }
     }
 
+    // ---- Actualizaciones (GitHub Releases) ----
+    private val checker = UpdateChecker()
+    private val _update = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val update = _update.asStateFlow()
+    private var downloadJob: Job? = null
+
+    /** manual = true cuando el usuario toca "Buscar actualizaciones" (ignora "Más tarde" y avisa si ya está al día). */
+    fun checkForUpdates(manual: Boolean) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            if (!manual) {
+                val (last, snooze) = settingsRepo.updateTimes()
+                if (now < snooze || now - last < SIX_HOURS) return@launch
+            } else {
+                _update.value = UpdateState.Checking
+            }
+            try {
+                val info = checker.check(BuildConfig.VERSION_NAME)
+                settingsRepo.setLastCheck(now)
+                _update.value = when {
+                    info != null -> UpdateState.Available(info)
+                    manual -> UpdateState.UpToDate
+                    else -> UpdateState.Idle
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _update.value = if (manual) UpdateState.Error("No se pudo buscar actualizaciones. Revisa tu conexión.") else UpdateState.Idle
+            }
+        }
+    }
+
+    /** "Más tarde": no vuelve a avisar durante 24 horas. */
+    fun snoozeUpdate() {
+        _update.value = UpdateState.Idle
+        viewModelScope.launch { settingsRepo.setSnoozeUntil(System.currentTimeMillis() + DAY) }
+    }
+
+    fun downloadUpdate() {
+        val info = (_update.value as? UpdateState.Available)?.info ?: return
+        _update.value = UpdateState.Downloading(info, 0f)
+        downloadJob = viewModelScope.launch {
+            try {
+                val file = checker.download(info, File(ondas.cacheDir, "updates")) { p ->
+                    _update.value = UpdateState.Downloading(info, p)
+                }
+                _update.value = UpdateState.Ready(info, file)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _update.value = UpdateState.Error("La descarga falló. Inténtalo de nuevo más tarde.")
+            }
+        }
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        _update.value = UpdateState.Idle
+    }
+
+    fun dismissUpdateMessage() {
+        _update.value = UpdateState.Idle
+    }
+
     private companion object {
         const val PAGE = 40
+        const val SIX_HOURS = 6 * 60 * 60 * 1000L
+        const val DAY = 24 * 60 * 60 * 1000L
     }
 }

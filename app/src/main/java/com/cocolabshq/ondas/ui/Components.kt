@@ -2,6 +2,7 @@
 
 package com.cocolabshq.ondas.ui
 
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +42,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,25 +69,83 @@ import com.cocolabshq.ondas.data.tagList
 import com.cocolabshq.ondas.player.PlayerUiState
 import kotlin.math.abs
 
-private fun fallbackBrush(name: String): Brush {
+internal fun fallbackBrush(name: String): Brush {
     val hue = (abs(name.hashCode()) % 360).toFloat()
     return Brush.linearGradient(listOf(Color.hsv(hue, 0.55f, 0.55f), Color.hsv((hue + 45f) % 360f, 0.6f, 0.4f)))
 }
 
-/** Logo de la emisora; si no hay o falla la carga, muestra la inicial sobre un degradado. */
+/** Favicon de alta resolución del sitio web de la emisora (respaldo cuando el logo propio falta o es diminuto). */
+private fun siteFavicon(homepage: String): String? {
+    val h = homepage.trim()
+    if (h.isEmpty()) return null
+    val host = runCatching { Uri.parse(if (h.startsWith("http")) h else "http://$h").host }.getOrNull()
+    return host?.takeIf { it.contains('.') }?.let { "https://www.google.com/s2/favicons?domain=$it&sz=256" }
+}
+
+/**
+ * Logo de la emisora con respaldos: 1) logo propio, 2) favicon del sitio web si el logo falla
+ * o es diminuto (< 72 px), 3) [fallback] (inicial, ondas, etc.).
+ */
+@Composable
+fun StationLogo(station: Station, modifier: Modifier = Modifier, fallback: @Composable () -> Unit) {
+    val fav = station.favicon.trim().takeIf { it.startsWith("http") }
+    val site = remember(station.homepage) { siteFavicon(station.homepage) }
+    var stage by remember(station.id) { mutableIntStateOf(0) }
+    var firstWasTiny by remember(station.id) { mutableStateOf(false) }
+
+    fun fail() {
+        stage = when (stage) {
+            0 -> if (fav != null && site != null) 1 else 3
+            1 -> if (firstWasTiny) 2 else 3
+            else -> 3
+        }
+    }
+
+    val url = when (stage) {
+        0 -> fav ?: site
+        1 -> site
+        2 -> fav
+        else -> null
+    }
+    val siteActive = stage == 1 || (stage == 0 && fav == null)
+
+    Box(modifier, contentAlignment = Alignment.Center) {
+        if (url == null) {
+            fallback()
+        } else {
+            key(url) {
+                SubcomposeAsyncImage(
+                    model = url,
+                    contentDescription = station.name,
+                    contentScale = ContentScale.Fit,
+                    filterQuality = FilterQuality.High,
+                    modifier = Modifier.fillMaxSize().padding(8.dp),
+                    loading = { fallback() },
+                    error = {
+                        fallback()
+                        LaunchedEffect(url) { fail() }
+                    },
+                    onSuccess = { ok ->
+                        val d = ok.result.drawable
+                        val m = minOf(d.intrinsicWidth, d.intrinsicHeight)
+                        if (stage == 0 && fav != null && site != null && m in 1..71) {
+                            firstWasTiny = true
+                            stage = 1
+                        } else if (siteActive && m in 1..31) {
+                            fail() // el servicio devolvió el ícono genérico diminuto
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Logo cuadrado (tarjetas, listas, mini-reproductor); sin logo muestra la inicial sobre un degradado. */
 @Composable
 fun StationArt(station: Station, modifier: Modifier = Modifier) {
     val brush = remember(station.name) { fallbackBrush(station.name) }
-    Box(modifier.background(brush), contentAlignment = Alignment.Center) {
-        SubcomposeAsyncImage(
-            model = station.favicon.ifBlank { null },
-            contentDescription = station.name,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize().padding(8.dp),
-            loading = { Initial(station) },
-            error = { Initial(station) },
-        )
-    }
+    StationLogo(station, modifier.background(brush)) { Initial(station) }
 }
 
 @Composable
@@ -99,6 +163,13 @@ private fun Initial(station: Station) {
 private fun Station.subtitle(): String =
     listOfNotNull(tagList().firstOrNull()?.capitalizeFirst(), country.ifBlank { null }).joinToString(" · ")
 
+/** Tarjeta semitransparente con el color de texto del tema fijado explícitamente (alto contraste). */
+@Composable
+fun glassColors() = CardDefaults.cardColors(
+    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+    contentColor = MaterialTheme.colorScheme.onSurface,
+)
+
 @Composable
 fun StationCard(
     station: Station,
@@ -112,7 +183,7 @@ fun StationCard(
         onClick = onClick,
         modifier = modifier,
         shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
+        colors = glassColors(),
         border = if (isCurrent) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
     ) {
         Box {
@@ -155,7 +226,7 @@ fun StationRow(
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
+        colors = glassColors(),
         border = if (isCurrent) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -183,19 +254,20 @@ fun StationRow(
 }
 
 @Composable
-fun MiniPlayer(state: PlayerUiState, onToggle: () -> Unit, onOpen: () -> Unit) {
+fun MiniPlayer(state: PlayerUiState, onToggle: () -> Unit, onNext: () -> Unit, onOpen: () -> Unit) {
     val st = state.station ?: return
     Surface(
         onClick = onOpen,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 4.dp,
     ) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             StationArt(st, Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)))
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(st.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                Text(st.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Text(
                     state.error ?: state.trackTitle ?: if (state.isBuffering) "Conectando…" else "En vivo · ${st.country}",
                     maxLines = 1,
@@ -206,12 +278,18 @@ fun MiniPlayer(state: PlayerUiState, onToggle: () -> Unit, onOpen: () -> Unit) {
             }
             IconButton(onClick = onToggle) {
                 if (state.isBuffering) {
-                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
                 } else {
                     Icon(
                         if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         contentDescription = if (state.isPlaying) "Pausar" else "Reproducir",
+                        tint = MaterialTheme.colorScheme.onSurface,
                     )
+                }
+            }
+            if (state.canSkip) {
+                IconButton(onClick = onNext) {
+                    Icon(Icons.Rounded.SkipNext, contentDescription = "Siguiente emisora", tint = MaterialTheme.colorScheme.onSurface)
                 }
             }
         }

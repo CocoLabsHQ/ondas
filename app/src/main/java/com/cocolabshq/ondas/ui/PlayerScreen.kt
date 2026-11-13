@@ -13,7 +13,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
@@ -57,13 +60,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -73,7 +80,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cocolabshq.ondas.MainViewModel
+import com.cocolabshq.ondas.data.Station
 import com.cocolabshq.ondas.data.flagEmoji
+import com.cocolabshq.ondas.ui.theme.readableOn
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -83,17 +92,31 @@ fun PlayerScreen(vm: MainViewModel, onBack: () -> Unit) {
     val favIds by vm.favoriteIds.collectAsStateWithLifecycle()
     val st = p.station ?: return
     val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
 
     var menu by remember { mutableStateOf(false) }
     var timerDialog by remember { mutableStateOf(false) }
+    val hasImage = st.favicon.isNotBlank()
 
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 24.dp),
+        Modifier
+            .fillMaxSize()
+            .drawBehind {
+                // resplandor suave del color de acento detrás de la carátula
+                drawRect(
+                    Brush.radialGradient(
+                        listOf(cs.primary.copy(alpha = 0.30f), Color.Transparent),
+                        center = Offset(size.width / 2f, size.height * 0.30f),
+                        radius = size.width * 0.95f,
+                    ),
+                )
+            }
+            .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.Rounded.KeyboardArrowDown, "Cerrar", onBack)
-            Text("AHORA SONANDO", style = MaterialTheme.typography.labelLarge, letterSpacing = 1.5.sp)
+            Text("AHORA SONANDO", style = MaterialTheme.typography.labelLarge, letterSpacing = 1.5.sp, color = cs.onBackground)
             Box {
                 RoundButton(Icons.Rounded.MoreVert, "Más opciones", { menu = true })
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -115,23 +138,51 @@ fun PlayerScreen(vm: MainViewModel, onBack: () -> Unit) {
         }
 
         Spacer(Modifier.weight(1f))
-        StationArt(st, Modifier.fillMaxWidth(0.7f).aspectRatio(1f).clip(RoundedCornerShape(32.dp)))
+
+        // Carátula: desliza a los lados para cambiar de emisora
+        Box(
+            Modifier
+                .fillMaxWidth(0.78f)
+                .aspectRatio(1f)
+                .shadow(28.dp, RoundedCornerShape(32.dp), ambientColor = cs.primary, spotColor = cs.primary)
+                .clip(RoundedCornerShape(32.dp))
+                .pointerInput(st.id) {
+                    var dx = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dx = 0f },
+                        onDragEnd = {
+                            if (dx < -120f) vm.player.next() else if (dx > 120f) vm.player.previous()
+                        },
+                    ) { _, delta -> dx += delta }
+                },
+        ) {
+            PlayerArt(st, p.isPlaying)
+        }
+
         Spacer(Modifier.height(24.dp))
 
-        Text(st.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(
+            st.name,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = cs.onBackground,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
         Spacer(Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val meta = listOfNotNull(
                 st.country.ifBlank { null }?.let { "${flagEmoji(st.countryCode)} $it" },
                 listOf(st.codec, if (st.bitrate > 0) "${st.bitrate}k" else "").filter { it.isNotBlank() }.joinToString(" ").ifBlank { null },
             ).joinToString(" · ")
-            Text(meta, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Text(meta, color = cs.onBackground.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
             LivePill()
         }
         Spacer(Modifier.height(8.dp))
         Text(
             p.error ?: p.trackTitle ?: if (p.isBuffering) "Conectando…" else " ",
-            color = if (p.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            color = if (p.error != null) cs.error else cs.primary,
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             maxLines = 2,
@@ -139,43 +190,48 @@ fun PlayerScreen(vm: MainViewModel, onBack: () -> Unit) {
         )
 
         Spacer(Modifier.weight(1f))
-        WaveForm(p.isPlaying, Modifier.fillMaxWidth().height(100.dp))
-        Spacer(Modifier.weight(1f))
+        if (hasImage) {
+            WaveForm(p.isPlaying, Modifier.fillMaxWidth().height(70.dp))
+            Spacer(Modifier.weight(1f))
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.VolumeDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.Rounded.VolumeDown, null, tint = cs.onBackground.copy(alpha = 0.75f))
             Slider(value = p.volume, onValueChange = { vm.player.setVolume(it) }, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
-            Icon(Icons.Rounded.VolumeUp, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.Rounded.VolumeUp, null, tint = cs.onBackground.copy(alpha = 0.75f))
         }
         Spacer(Modifier.height(12.dp))
 
         val isFav = st.id in favIds
-        Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             RoundButton(
                 if (isFav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 if (isFav) "Quitar de favoritas" else "Añadir a favoritas",
                 { vm.toggleFavorite(st) },
-                tint = if (isFav) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                tint = if (isFav) cs.primary else cs.onSurface,
             )
-            RoundButton(Icons.Rounded.SkipPrevious, "Anterior", { vm.player.previous() })
+            RoundButton(Icons.Rounded.SkipPrevious, "Emisora anterior", { vm.player.previous() }, size = 56.dp, tint = if (p.canSkip) cs.onSurface else cs.onSurface.copy(alpha = 0.35f))
             Box(
-                Modifier.size(76.dp).clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)))
+                Modifier.size(84.dp)
+                    .shadow(16.dp, CircleShape, ambientColor = cs.primary, spotColor = cs.primary)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(cs.primary, cs.secondary)))
                     .clickable { vm.player.toggle() },
                 contentAlignment = Alignment.Center,
             ) {
+                val onAccent = readableOn(cs.primary, cs.secondary)
                 if (p.isBuffering) {
-                    CircularProgressIndicator(Modifier.size(32.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 3.dp)
+                    CircularProgressIndicator(Modifier.size(34.dp), color = onAccent, strokeWidth = 3.dp)
                 } else {
                     Icon(
                         if (p.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         contentDescription = if (p.isPlaying) "Pausar" else "Reproducir",
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(40.dp),
+                        tint = onAccent,
+                        modifier = Modifier.size(44.dp),
                     )
                 }
             }
-            RoundButton(Icons.Rounded.SkipNext, "Siguiente", { vm.player.next() })
+            RoundButton(Icons.Rounded.SkipNext, "Siguiente emisora", { vm.player.next() }, size = 56.dp, tint = if (p.canSkip) cs.onSurface else cs.onSurface.copy(alpha = 0.35f))
             RoundButton(Icons.Rounded.Share, "Compartir", {
                 val send = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -184,6 +240,18 @@ fun PlayerScreen(vm: MainViewModel, onBack: () -> Unit) {
                 ctx.startActivity(Intent.createChooser(send, null))
             })
         }
+
+        Spacer(Modifier.height(10.dp))
+        val next = p.next
+        Text(
+            if (next != null) "Siguiente: ${next.name}" else " ",
+            color = cs.onBackground.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.clickable(enabled = next != null) { vm.player.next() }.padding(vertical = 6.dp),
+        )
+        Spacer(Modifier.height(14.dp))
     }
 
     if (timerDialog) {
@@ -205,11 +273,66 @@ fun PlayerScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
 }
 
+/** Logo de la emisora (con respaldos); si no hay ninguno utilizable se muestra una animación de ondas. */
 @Composable
-private fun RoundButton(icon: ImageVector, desc: String, onClick: () -> Unit, tint: Color = MaterialTheme.colorScheme.onSurface) {
+private fun PlayerArt(st: Station, playing: Boolean) {
+    StationLogo(st, Modifier.fillMaxSize().background(fallbackBrush(st.name))) { WavesArt(playing) }
+}
+
+/** Ondas expansivas + onda senoidal; se mueven mientras suena y se calman en pausa. */
+@Composable
+private fun WavesArt(playing: Boolean) {
+    val cs = MaterialTheme.colorScheme
+    val t = rememberInfiniteTransition(label = "waves")
+    val phase by t.animateFloat(0f, 1f, infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart), label = "ripple")
+    val wave by t.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart), label = "sine")
+    val amp by animateFloatAsState(if (playing) 1f else 0.15f, tween(600), label = "amp")
+    val c1 = cs.primary
+    val c2 = cs.secondary
+
     Box(
-        Modifier.size(48.dp).clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
+        Modifier.fillMaxSize().background(Brush.linearGradient(listOf(lerp(cs.surface, c1, 0.40f), lerp(cs.surface, c2, 0.30f)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val center = Offset(size.width / 2f, size.height * 0.46f)
+            val maxR = size.minDimension / 2f
+            for (i in 0 until 4) {
+                val p = (phase + i / 4f) % 1f
+                drawCircle(
+                    brush = Brush.linearGradient(listOf(c1, c2)),
+                    radius = maxR * (0.26f + 0.74f * p),
+                    center = center,
+                    alpha = (1f - p) * 0.75f * (0.25f + 0.75f * amp),
+                    style = Stroke(width = 4.dp.toPx()),
+                )
+            }
+            drawCircle(Brush.linearGradient(listOf(c1, c2)), radius = maxR * 0.25f, center = center)
+
+            val w = size.width
+            for (layer in 0 until 2) {
+                val path = Path()
+                val steps = 90
+                val dir = if (layer == 0) 1f else -1f
+                for (s in 0..steps) {
+                    val nx = s / steps.toFloat()
+                    val env = sin(PI.toFloat() * nx)
+                    val y = size.height * 0.86f + sin(nx * 2f * PI.toFloat() * (2f + layer) + wave * (layer + 1) * dir) * maxR * 0.10f * amp * env
+                    if (s == 0) path.moveTo(0f, y) else path.lineTo(w * nx, y)
+                }
+                drawPath(path, Brush.horizontalGradient(listOf(c1, c2), startX = 0f, endX = w), alpha = if (layer == 0) 0.9f else 0.45f, style = Stroke(width = (4 - layer).dp.toPx(), cap = StrokeCap.Round))
+            }
+        }
+        Icon(Icons.Rounded.Radio, null, tint = readableOn(c1, c2), modifier = Modifier.size(54.dp).padding(bottom = 0.dp))
+    }
+}
+
+@Composable
+private fun RoundButton(icon: ImageVector, desc: String, onClick: () -> Unit, tint: Color = MaterialTheme.colorScheme.onSurface, size: Dp = 48.dp) {
+    Box(
+        Modifier.size(size).clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f))
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, contentDescription = desc, tint = tint) }
@@ -218,16 +341,16 @@ private fun RoundButton(icon: ImageVector, desc: String, onClick: () -> Unit, ti
 @Composable
 private fun LivePill() {
     Row(
-        Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFFFF3B30).copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 3.dp),
+        Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFFFF3B30).copy(alpha = 0.22f)).padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFFF3B30)))
         Spacer(Modifier.width(5.dp))
-        Text("EN VIVO", color = Color(0xFFFF3B30), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        Text("EN VIVO", color = Color(0xFFFF5A50), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
     }
 }
 
-/** Onda animada decorativa: se mueve mientras suena y se aplana en pausa. */
+/** Onda decorativa inferior (para emisoras que sí tienen logo). */
 @Composable
 private fun WaveForm(playing: Boolean, modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "wave")

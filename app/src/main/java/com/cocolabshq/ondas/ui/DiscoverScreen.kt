@@ -226,7 +226,11 @@ private fun ThemedChip(label: String, selected: Boolean, onClick: () -> Unit, dr
         onClick = onClick,
         label = { Text(label, maxLines = 1) },
         trailingIcon = trailing,
-        colors = FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)),
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+            labelColor = MaterialTheme.colorScheme.onSurface,
+            iconColor = MaterialTheme.colorScheme.onSurface,
+        ),
     )
 }
 

@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
 import androidx.core.content.ContextCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -29,6 +30,9 @@ data class PlayerUiState(
     val error: String? = null,
     val sleepMinutesLeft: Int? = null,
     val volume: Float = 1f,
+    val next: Station? = null,
+    val previous: Station? = null,
+    val canSkip: Boolean = false,
 )
 
 /** Puente entre la UI y PlaybackService (vía MediaController). */
@@ -56,6 +60,18 @@ class PlayerController(
                     isBuffering = playbackState == Player.STATE_BUFFERING,
                     error = if (playbackState == Player.STATE_READY) null else it.error,
                 )
+            }
+        }
+
+        // Cambio de emisora desde la notificación, la pantalla de bloqueo o los botones de la app.
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (mediaItem == null || reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) return
+            val s = queue.firstOrNull { it.id == mediaItem.mediaId } ?: return
+            _state.update { it.copy(station = s, error = null, trackTitle = null) }
+            refreshNeighbors()
+            scope.launch {
+                repo.markPlayed(s)
+                repo.api.registerClick(s.id)
             }
         }
 
@@ -88,23 +104,54 @@ class PlayerController(
         }, ContextCompat.getMainExecutor(context))
     }
 
+    private fun toItem(station: Station): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(station.id)
+            .setUri(station.streamUrl)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(station.name)
+                    .setArtist(station.country)
+                    .setArtworkUri(station.favicon.takeIf { it.isNotBlank() }?.let(Uri::parse))
+                    .build(),
+            )
+            .build()
+
+    private fun refreshNeighbors() {
+        val cur = _state.value.station
+        val i = queue.indexOfFirst { it.id == cur?.id }
+        if (i < 0 || queue.size < 2) {
+            _state.update { it.copy(next = null, previous = null, canSkip = false) }
+        } else {
+            _state.update {
+                it.copy(
+                    next = queue[(i + 1) % queue.size],
+                    previous = queue[(i - 1 + queue.size) % queue.size],
+                    canSkip = true,
+                )
+            }
+        }
+    }
+
+    /**
+     * Reproduce [station] y carga la lista [list] como cola: así "siguiente/anterior" funcionan
+     * desde la app, la notificación y la pantalla de bloqueo.
+     */
     fun play(station: Station, list: List<Station> = listOf(station)) {
-        queue = list
+        val full = if (list.any { it.id == station.id }) list else listOf(station) + list
+        val idx = full.indexOfFirst { it.id == station.id }
+        val from = (idx - MAX_QUEUE / 2).coerceAtLeast(0)
+        val to = (from + MAX_QUEUE).coerceAtMost(full.size)
+        queue = full.subList(from, to)
+        val startIndex = queue.indexOfFirst { it.id == station.id }
+
         _state.update { it.copy(station = station, error = null, trackTitle = null, isBuffering = true) }
+        refreshNeighbors()
+
         val start: () -> Unit = {
             controller?.let { c ->
-                val item = MediaItem.Builder()
-                    .setMediaId(station.id)
-                    .setUri(station.streamUrl)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(station.name)
-                            .setArtist(station.country)
-                            .setArtworkUri(station.favicon.takeIf { it.isNotBlank() }?.let(Uri::parse))
-                            .build(),
-                    )
-                    .build()
-                c.setMediaItem(item)
+                c.setMediaItems(queue.map { toItem(it) }, startIndex, C.TIME_UNSET)
+                c.repeatMode = Player.REPEAT_MODE_ALL
                 c.prepare()
                 c.play()
             }
@@ -128,14 +175,15 @@ class PlayerController(
         }
     }
 
-    fun next() = step(+1)
-    fun previous() = step(-1)
+    fun next() = step(forward = true)
+    fun previous() = step(forward = false)
 
-    private fun step(delta: Int) {
-        val cur = _state.value.station ?: return
+    private fun step(forward: Boolean) {
+        val c = controller ?: return
         if (queue.size < 2) return
-        val i = queue.indexOfFirst { it.id == cur.id }
-        play(queue[(i + delta).mod(queue.size)], queue)
+        if (forward) c.seekToNextMediaItem() else c.seekToPreviousMediaItem()
+        if (c.playbackState == Player.STATE_IDLE) c.prepare() // tras un error
+        c.play()
     }
 
     fun setVolume(v: Float) {
@@ -157,5 +205,9 @@ class PlayerController(
             controller?.pause()
             _state.update { it.copy(sleepMinutesLeft = null) }
         }
+    }
+
+    private companion object {
+        const val MAX_QUEUE = 150
     }
 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -27,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import coil.compose.AsyncImage
+import com.cocolabshq.ondas.data.CustomColors
 import java.io.File
 
 /** Definición de un tema. Para agregar uno nuevo basta con sumar una línea a [Themes.all]. */
@@ -39,9 +41,23 @@ data class ThemeDef(
     val bgTop: Color,
     val bgBottom: Color,
     val surface: Color,
-    val text: Color,
+    val text: Color,               // texto sobre el fondo
     val dynamic: Boolean = false,
+    val onSurface: Color = text,   // texto sobre tarjetas/superficies
 )
+
+private val LightText = Color(0xFFF8F6FF)
+private val DarkText = Color(0xFF14111C)
+
+fun contrastRatio(a: Color, b: Color): Float {
+    val la = a.luminance() + 0.05f
+    val lb = b.luminance() + 0.05f
+    return maxOf(la, lb) / minOf(la, lb)
+}
+
+/** Elige texto claro u oscuro, el que mejor contraste tenga con TODOS los fondos dados. */
+fun readableOn(vararg backgrounds: Color): Color =
+    listOf(LightText, DarkText).maxBy { t -> backgrounds.minOf { contrastRatio(t, it) } }
 
 object Themes {
     val all = listOf(
@@ -59,28 +75,65 @@ object Themes {
     /** "Dinámico" (Material You) solo existe desde Android 12. */
     val available get() = all.filter { !it.dynamic || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S }
 
-    fun byId(id: String) = available.firstOrNull { it.id == id } ?: all.first()
+    /** Tema armado con la paleta del usuario; el color del texto se elige solo para que siempre se lea. */
+    fun custom(c: CustomColors): ThemeDef {
+        val top = Color(c.bgTop)
+        val bottom = Color(c.bgBottom)
+        val surface = Color(c.surface)
+        val textOnBg = when (c.textMode) {
+            "light" -> LightText
+            "dark" -> DarkText
+            else -> readableOn(top, bottom)
+        }
+        val textOnSurface = when (c.textMode) {
+            "light" -> LightText
+            "dark" -> DarkText
+            else -> readableOn(surface)
+        }
+        return ThemeDef(
+            id = "custom",
+            name = "Personalizado",
+            dark = lerp(top, bottom, 0.5f).luminance() < 0.4f,
+            primary = Color(c.primary),
+            secondary = Color(c.secondary),
+            bgTop = top,
+            bgBottom = bottom,
+            surface = surface,
+            text = textOnBg,
+            onSurface = textOnSurface,
+        )
+    }
+
+    fun byId(id: String, custom: CustomColors): ThemeDef =
+        if (id == "custom") custom(custom) else available.firstOrNull { it.id == id } ?: all.first()
 }
 
 private fun ThemeDef.toScheme(): ColorScheme {
-    val onPrimary = if (primary.luminance() > 0.5f) Color(0xFF1A1020) else Color.White
     val container = lerp(surface, primary, 0.28f)
-    val variant = lerp(surface, text, 0.08f)
+    val variant = lerp(surface, onSurface, 0.08f)
     return if (dark) {
         darkColorScheme(
-            primary = primary, onPrimary = onPrimary, primaryContainer = container, onPrimaryContainer = text,
-            secondary = secondary, onSecondary = onPrimary, secondaryContainer = container, onSecondaryContainer = text,
-            background = bgBottom, onBackground = text, surface = surface, onSurface = text,
-            surfaceVariant = variant, onSurfaceVariant = text.copy(alpha = 0.7f), outline = text.copy(alpha = 0.4f),
+            primary = primary, onPrimary = readableOn(primary),
+            primaryContainer = container, onPrimaryContainer = readableOn(container),
+            secondary = secondary, onSecondary = readableOn(secondary),
+            secondaryContainer = container, onSecondaryContainer = readableOn(container),
+            background = bgBottom, onBackground = text,
+            surface = surface, onSurface = onSurface,
+            surfaceVariant = variant, onSurfaceVariant = onSurface.copy(alpha = 0.72f),
+            outline = onSurface.copy(alpha = 0.45f),
             surfaceContainerLow = surface, surfaceContainer = surface,
             surfaceContainerHigh = variant, surfaceContainerHighest = variant,
         )
     } else {
         lightColorScheme(
-            primary = primary, onPrimary = onPrimary, primaryContainer = container, onPrimaryContainer = text,
-            secondary = secondary, onSecondary = onPrimary, secondaryContainer = container, onSecondaryContainer = text,
-            background = bgBottom, onBackground = text, surface = surface, onSurface = text,
-            surfaceVariant = variant, onSurfaceVariant = text.copy(alpha = 0.7f), outline = text.copy(alpha = 0.4f),
+            primary = primary, onPrimary = readableOn(primary),
+            primaryContainer = container, onPrimaryContainer = readableOn(container),
+            secondary = secondary, onSecondary = readableOn(secondary),
+            secondaryContainer = container, onSecondaryContainer = readableOn(container),
+            background = bgBottom, onBackground = text,
+            surface = surface, onSurface = onSurface,
+            surfaceVariant = variant, onSurfaceVariant = onSurface.copy(alpha = 0.72f),
+            outline = onSurface.copy(alpha = 0.45f),
             surfaceContainerLow = surface, surfaceContainer = surface,
             surfaceContainerHigh = variant, surfaceContainerHighest = variant,
         )
@@ -90,8 +143,8 @@ private fun ThemeDef.toScheme(): ColorScheme {
 val LocalGradient = staticCompositionLocalOf { listOf(Color.Black, Color.Black) }
 
 @Composable
-fun OndasTheme(themeId: String, content: @Composable () -> Unit) {
-    val def = Themes.byId(themeId)
+fun OndasTheme(themeId: String, custom: CustomColors, content: @Composable () -> Unit) {
+    val def = Themes.byId(themeId, custom)
     val systemDark = isSystemInDarkTheme()
     val context = LocalContext.current
     val useDynamic = def.dynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -117,7 +170,10 @@ fun OndasTheme(themeId: String, content: @Composable () -> Unit) {
     }
 
     CompositionLocalProvider(LocalGradient provides gradient) {
-        MaterialTheme(colorScheme = scheme, typography = Typography(), content = content)
+        MaterialTheme(colorScheme = scheme, typography = Typography()) {
+            // Color de texto por defecto = el que contrasta con el fondo (evita el texto negro por defecto).
+            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground, content = content)
+        }
     }
 }
 

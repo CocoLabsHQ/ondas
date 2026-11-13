@@ -15,8 +15,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // En cada actualización: sube versionCode (+1) y versionName (semver).
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     // Firma fija para el APK "debug": así CI y tu PC firman igual y cada versión
@@ -64,6 +64,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore)
     implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

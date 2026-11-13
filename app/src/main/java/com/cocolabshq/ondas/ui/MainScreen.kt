@@ -19,6 +19,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -56,14 +57,19 @@ fun MainScaffold(vm: MainViewModel, settings: AppSettings) {
     val route = nav.currentBackStackEntryAsState().value?.destination?.route
     val player by vm.player.state.collectAsStateWithLifecycle()
 
+    // Al abrir la app: buscar versión nueva (como máximo cada 6 horas)
+    LaunchedEffect(Unit) { vm.checkForUpdates(manual = false) }
+
     Scaffold(
         containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
         bottomBar = {
             if (route != Routes.PLAYER) {
                 Column {
                     MiniPlayer(
                         state = player,
                         onToggle = { vm.player.toggle() },
+                        onNext = { vm.player.next() },
                         onOpen = { nav.navigate(Routes.PLAYER) { launchSingleTop = true } },
                     )
                     BottomBar(nav, route)
@@ -83,6 +89,8 @@ fun MainScaffold(vm: MainViewModel, settings: AppSettings) {
             ) { PlayerScreen(vm) { nav.popBackStack() } }
         }
     }
+
+    UpdateDialogs(vm)
 }
 
 @Composable
